@@ -1,8 +1,9 @@
 package com.example.contactconvert
 
 import android.Manifest
-import android.app.Activity
-import android.content.ContentProviderOperation
+import android.content.ContentResolver
+import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -26,8 +27,7 @@ class MainActivity :
     private lateinit var btnConvertNumbers: Button
 
     companion object {
-        const val REQUEST_ADD_CONTACT = 1
-        const val REQUEST_CONTACTS_PERMISSION = 100
+        private const val REQUEST_CODE_PERMISSIONS = 1
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -49,7 +49,7 @@ class MainActivity :
 
         btnAddContact.setOnClickListener {
             val intent = Intent(this, AddContactActivity::class.java)
-            startActivityForResult(intent, REQUEST_ADD_CONTACT)
+            startActivityForResult(intent, 1)
         }
 
         btnDeleteSelected.setOnClickListener {
@@ -60,15 +60,29 @@ class MainActivity :
             convertPhoneNumbers()
         }
 
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS),
-                REQUEST_CONTACTS_PERMISSION,
-            )
-        } else {
+        if (checkPermissions()) {
             loadContacts()
+        } else {
+            requestPermissions()
         }
+    }
+
+    private fun checkPermissions(): Boolean =
+        ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.READ_CONTACTS,
+        ) == PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.WRITE_CONTACTS,
+            ) == PackageManager.PERMISSION_GRANTED
+
+    private fun requestPermissions() {
+        ActivityCompat.requestPermissions(
+            this,
+            arrayOf(Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS),
+            REQUEST_CODE_PERMISSIONS,
+        )
     }
 
     override fun onRequestPermissionsResult(
@@ -77,30 +91,18 @@ class MainActivity :
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQUEST_CONTACTS_PERMISSION) {
-            if ((grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)) {
+        if (requestCode == REQUEST_CODE_PERMISSIONS) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 loadContacts()
             } else {
-                Toast.makeText(this, "Permission denied", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Permissions denied", Toast.LENGTH_SHORT).show()
             }
-        }
-    }
-
-    override fun onActivityResult(
-        requestCode: Int,
-        resultCode: Int,
-        data: Intent?,
-    ) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQUEST_ADD_CONTACT && resultCode == Activity.RESULT_OK) {
-            val name = data?.getStringExtra("CONTACT_NAME") ?: ""
-            val phoneNumber = data?.getStringExtra("CONTACT_PHONE_NUMBER") ?: ""
-            addContact(name, phoneNumber)
         }
     }
 
     private fun loadContacts() {
         contacts.clear()
+        val contentResolver: ContentResolver = contentResolver
         val cursor =
             contentResolver.query(
                 ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
@@ -109,16 +111,20 @@ class MainActivity :
                 null,
                 null,
             )
-        cursor?.let {
-            val nameIndex = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
-            val numberIndex = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
-            while (cursor.moveToNext()) {
-                val name = cursor.getString(nameIndex)
-                val phoneNumber = cursor.getString(numberIndex)
-                contacts.add(Contact(name, phoneNumber))
+
+        cursor?.use {
+            val idIndex = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone._ID)
+            val nameIndex = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+            val numberIndex = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+
+            while (it.moveToNext()) {
+                val id = it.getString(idIndex)
+                val name = it.getString(nameIndex)
+                val number = it.getString(numberIndex)
+                contacts.add(Contact(id, name, number))
             }
-            cursor.close()
         }
+
         contactAdapter.notifyDataSetChanged()
     }
 
@@ -126,75 +132,86 @@ class MainActivity :
         name: String,
         phoneNumber: String,
     ) {
-        val ops = ArrayList<ContentProviderOperation>()
+        val contentResolver: ContentResolver = contentResolver
+        val contentValues =
+            ContentValues().apply {
+                put(ContactsContract.RawContacts.ACCOUNT_TYPE, "")
+                put(ContactsContract.RawContacts.ACCOUNT_NAME, "")
+            }
 
-        ops.add(
-            ContentProviderOperation
-                .newInsert(ContactsContract.RawContacts.CONTENT_URI)
-                .withValue(ContactsContract.RawContacts.ACCOUNT_TYPE, null)
-                .withValue(ContactsContract.RawContacts.ACCOUNT_NAME, null)
-                .build(),
-        )
+        val rawContactUri = contentResolver.insert(ContactsContract.RawContacts.CONTENT_URI, contentValues)
+        val rawContactId = ContentUris.parseId(rawContactUri!!)
 
-        ops.add(
-            ContentProviderOperation
-                .newInsert(ContactsContract.Data.CONTENT_URI)
-                .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
-                .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
-                .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, name)
-                .build(),
-        )
+        contentValues.clear()
+        contentValues.put(ContactsContract.Data.RAW_CONTACT_ID, rawContactId)
+        contentValues.put(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
+        contentValues.put(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, name)
+        contentResolver.insert(ContactsContract.Data.CONTENT_URI, contentValues)
 
-        ops.add(
-            ContentProviderOperation
-                .newInsert(ContactsContract.Data.CONTENT_URI)
-                .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
-                .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE)
-                .withValue(ContactsContract.CommonDataKinds.Phone.NUMBER, phoneNumber)
-                .withValue(ContactsContract.CommonDataKinds.Phone.TYPE, ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE)
-                .build(),
-        )
+        contentValues.clear()
+        contentValues.put(ContactsContract.Data.RAW_CONTACT_ID, rawContactId)
+        contentValues.put(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE)
+        contentValues.put(ContactsContract.CommonDataKinds.Phone.NUMBER, phoneNumber)
+        contentValues.put(ContactsContract.CommonDataKinds.Phone.TYPE, ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE)
+        contentResolver.insert(ContactsContract.Data.CONTENT_URI, contentValues)
 
-        try {
-            contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
-            loadContacts()
-        } catch (e: Exception) {
-            e.printStackTrace()
-            Toast.makeText(this, "Failed to add contact", Toast.LENGTH_SHORT).show()
-        }
+        loadContacts()
     }
 
     private fun deleteSelectedContacts() {
-        val selectedContacts = contactAdapter.getSelectedContacts()
-        if (selectedContacts.isNotEmpty()) {
-            for (contact in selectedContacts) {
-                val where = "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} = ? AND ${ContactsContract.CommonDataKinds.Phone.NUMBER} = ?"
-                val args = arrayOf(contact.name, contact.phoneNumber)
-                contentResolver.delete(ContactsContract.CommonDataKinds.Phone.CONTENT_URI, where, args)
-            }
-            loadContacts()
-            Toast.makeText(this, "Selected contacts deleted", Toast.LENGTH_SHORT).show()
-        } else {
-            Toast.makeText(this, "No contacts selected", Toast.LENGTH_SHORT).show()
+        val contentResolver: ContentResolver = contentResolver
+        for (contact in contacts.filter { it.isSelected }) {
+            val uri = ContentUris.withAppendedId(ContactsContract.Data.CONTENT_URI, contact.id.toLong())
+            contentResolver.delete(uri, null, null)
         }
+        contactAdapter.deleteSelectedContacts()
+        loadContacts()
     }
 
     private fun convertPhoneNumbers() {
         for (contact in contacts) {
-            val formattedNumber = formatPhoneNumber(contact.phoneNumber)
-            contact.phoneNumber = formattedNumber
+            if (contact.phoneNumber.startsWith("0167") || contact.phoneNumber.startsWith("84167")) {
+                val newNumber = contact.phoneNumber.replaceFirst("0167", "037").replaceFirst("84167", "037")
+                editContact(contact.id, contact.name, newNumber)
+            }
         }
-        contactAdapter.notifyDataSetChanged()
+        loadContacts()
     }
 
-    private fun formatPhoneNumber(phoneNumber: String): String =
-        if (phoneNumber.startsWith("0")) {
-            "+84${phoneNumber.substring(1)}"
-        } else {
-            phoneNumber
-        }
+    private fun editContact(
+        id: String,
+        name: String,
+        newNumber: String,
+    ) {
+        val contentResolver: ContentResolver = contentResolver
+
+        val where =
+            "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ? AND " +
+                "${ContactsContract.CommonDataKinds.Phone.MIMETYPE} = ?"
+        val params = arrayOf(id, ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE)
+
+        val contentValues =
+            ContentValues().apply {
+                put(ContactsContract.CommonDataKinds.Phone.NUMBER, newNumber)
+            }
+
+        contentResolver.update(ContactsContract.Data.CONTENT_URI, contentValues, where, params)
+    }
 
     override fun onItemClick(contact: Contact) {
         Toast.makeText(this, "Clicked on ${contact.name}", Toast.LENGTH_SHORT).show()
+    }
+
+    override fun onActivityResult(
+        requestCode: Int,
+        resultCode: Int,
+        data: Intent?,
+    ) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 1 && resultCode == RESULT_OK) {
+            val name = data?.getStringExtra("contact_name") ?: ""
+            val phoneNumber = data?.getStringExtra("contact_phone_number") ?: ""
+            addContact(name, phoneNumber)
+        }
     }
 }

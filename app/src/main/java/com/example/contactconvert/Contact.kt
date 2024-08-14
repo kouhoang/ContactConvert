@@ -1,6 +1,8 @@
 package com.example.contactconvert
 
 data class Contact(
-    var name: String,
-    var phoneNumber: String,
+    val id: String,
+    val name: String,
+    val phoneNumber: String,
+    var isSelected: Boolean = false,
 )
