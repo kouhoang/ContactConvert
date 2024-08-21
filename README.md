@@ -22,8 +22,24 @@
 - `READ_CONTACTS`: Đọc danh bạ từ thiết bị.
 - `WRITE_CONTACTS`: Ghi và chỉnh sửa danh bạ trên thiết bị.
 
-## Hướng Dẫn Cài Đặt
+## Cài đặt
 
-1. Clone repository này về máy của bạn:
-   ```bash
-   git clone https://github.com/kouhoang/ContactConvert.git
+1. **Clone repo:**
+
+    ```sh
+    git clone https://github.com/kouhoang/ContactConvert.git
+    ```
+
+2. **Mở project trong Android Studio:**
+
+    - Chọn **File** -> **Open**.
+    - Dẫn đến thư mục vừa clone và chọn **Open**.
+
+3. **Build project:**
+    - Đảm bảo rằng các dependencies cần thiết được cài đặt.
+    - Build project bằng cách chọn **Build** -> **Make Project**.
+
+4. **Run project:**
+    - Chọn một thiết bị ảo hoặc kết nối thiết bị thật để chạy ứng dụng.
+    - Nhấn nút **Run** để cài đặt và chạy ứng dụng trên thiết bị.
+
